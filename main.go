@@ -6,7 +6,9 @@ import (
 	"io"
 	"log"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
@@ -71,48 +73,61 @@ func sftpDownload() {
 		// csvDirectory := w.Stat().IsDir()
 		path := w.Path()
 		isCsv := strings.Contains(path, ".csv")
-
+		timestamp := strconv.FormatInt(time.Now().UTC().UnixNano(), 10)
+		localPath := "/tmp/" + timestamp
 		if isCsv {
 			sftpDownload()
+
+			log.Println("isCsv", isCsv)
+			srcFile, err := clientSftp.OpenFile(path, (os.O_RDONLY))
+			if err != nil {
+				panic(err)
+			}
+
+			dstFile, err := os.Create(localPath)
+			if err != nil {
+				panic(err)
+			}
+			bytes, err := io.Copy(dstFile, srcFile)
+			if err != nil {
+				panic(err)
+			}
+			log.Printf("%d bytes copied to %v", bytes, localPath)
+			defer dstFile.Close()
+			defer srcFile.Close()
+
 		}
-		log.Println("isCsv", isCsv)
-		downloadFile(client, path, "temp")
+		// downloadFile(clientSftp, path, "temp")
 	}
 
-	// check it's there
-	// fi, err := clientSftp.Lstat("/home/ta/hello.txt")
-	// if err != nil {
-	// 	log.Fatal(err)
-	// }
-	// log.Println(fi)
 }
 
-func downloadFile(sc sftp.Client, remoteFile, localFile string) (err error) {
+// func downloadFile(sc, remoteFile, localFile string) (err error) {
 
-	localPath := "/tmp/" + localFile
+// 	localPath := "/tmp/" + localFile
 
-	log.Printf("Downloading [%s] to [%s] ...", remoteFile, localFile)
-	// Note: SFTP To Go doesn't support O_RDWR mode
-	srcFile, err := sc.OpenFile(remoteFile, (os.O_RDONLY))
-	if err != nil {
-		return fmt.Errorf("unable to open remote file: %v", err)
-	}
-	defer srcFile.Close()
+// 	log.Printf("Downloading [%s] to [%s] ...", remoteFile, localFile)
+// 	// Note: SFTP To Go doesn't support O_RDWR mode
+// 	srcFile, err := sc.OpenFile(remoteFile, (os.O_RDONLY))
+// 	if err != nil {
+// 		return fmt.Errorf("unable to open remote file: %v", err)
+// 	}
+// 	defer srcFile.Close()
 
-	dstFile, err := os.Create(localPath)
-	if err != nil {
-		return fmt.Errorf("unable to open local file: %v", err)
-	}
-	defer dstFile.Close()
+// 	dstFile, err := os.Create(localPath)
+// 	if err != nil {
+// 		return fmt.Errorf("unable to open local file: %v", err)
+// 	}
+// 	defer dstFile.Close()
 
-	bytes, err := io.Copy(dstFile, srcFile)
-	if err != nil {
-		return fmt.Errorf("unable to download remote file: %v", err)
-	}
-	log.Printf("%d bytes copied to %v", bytes, localPath)
+// 	bytes, err := io.Copy(dstFile, srcFile)
+// 	if err != nil {
+// 		return fmt.Errorf("unable to download remote file: %v", err)
+// 	}
+// 	log.Printf("%d bytes copied to %v", bytes, localPath)
 
-	return nil
-}
+// 	return nil
+// }
 
 func connectToHost(user, host, pass string) (*ssh.Client, error) {
 
