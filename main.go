@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/joho/godotenv"
+
 	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
 )
@@ -22,6 +24,10 @@ type empData struct {
 }
 
 func main() {
+	err := godotenv.Load(".env")
+	if err != nil {
+		log.Fatalf("Some error occured. Err: %s", err)
+	}
 
 	readCSVLocal()
 	sftpDownload()
@@ -55,7 +61,10 @@ func readCSVLocal() {
 
 func sftpDownload() {
 
-	client, err := connectToHost("ta", "10.2.4.194:22", "Bingo#777")
+	host := os.Getenv("HOST")
+	user := os.Getenv("USER")
+	password := os.Getenv("PASSWORD")
+	client, err := connectToHost(user, host, password)
 	if err != nil {
 		panic(err)
 	}
