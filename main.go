@@ -4,6 +4,7 @@ import (
 	"encoding/csv"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
 	"os"
 	"path/filepath"
@@ -24,39 +25,78 @@ type empData struct {
 }
 
 func main() {
+	var start = time.Now()
+
 	err := godotenv.Load(".env")
 	if err != nil {
 		log.Fatalf("Some error occured. Err: %s", err)
 	}
 
-	readCSVLocal()
 	sftpDownload()
+	sftpTime := time.Now()
+	fmt.Println("SFTP Time", time.Since(start))
 
+	readCSVLocal()
+	readCSVTime := time.Now()
+
+	fmt.Println("READ CSV Time", time.Since(sftpTime))
+	deleteLocalFiles()
+	fmt.Println("Delete CSV Time", time.Since(readCSVTime))
+}
+
+// generateCHCSVs(){
+
+// }
+func deleteLocalFiles() {
+	localDirectory := "tmp"
+	files, err := ioutil.ReadDir(localDirectory)
+
+	if err != nil {
+
+		log.Fatal(err)
+	}
+
+	for _, f := range files {
+		name := localDirectory + "/" + f.Name()
+		os.Remove(name)
+	}
 }
 
 func readCSVLocal() {
 	fmt.Println("reading CSV File from local")
-	csvFile, err := os.Open("test.csv")
-	if err != nil {
-		fmt.Println(err)
-		fmt.Println("cannot open the file ")
-	}
-	fmt.Println("Successfully Opened CSV file")
-	defer csvFile.Close()
+	localDirectory := "tmp"
+	files, err := ioutil.ReadDir(localDirectory)
 
-	csvLines, err := csv.NewReader(csvFile).ReadAll()
 	if err != nil {
-		fmt.Println(err)
+
+		log.Fatal(err)
 	}
-	for _, line := range csvLines {
-		fmt.Println("linr ", line)
-		// emp := empData{
-		// 	Name: line[0],
-		// 	Age:  line[1],
-		// 	City: line[2],
-		// }
-		// fmt.Println(emp.Name + " " + emp.Age + " " + emp.City)
+
+	for _, f := range files {
+		name := localDirectory + "/" + f.Name()
+		csvFile, err := os.Open(name)
+		if err != nil {
+			fmt.Println(err)
+			fmt.Println("cannot open the file ")
+		}
+
+		csvLines, err := csv.NewReader(csvFile).ReadAll()
+		if err != nil {
+			fmt.Println(err)
+		}
+		for _, line := range csvLines {
+			fmt.Println("CSV ", line)
+			// emp := empData{
+			// 	Name: line[0],
+			// 	Age:  line[1],
+			// 	City: line[2],
+			// }
+			// fmt.Println(emp.Name + " " + emp.Age + " " + emp.City)
+		}
+		defer csvFile.Close()
+
 	}
+
 }
 
 func sftpDownload() error {
@@ -100,7 +140,6 @@ func sftpDownload() error {
 		if isCsv {
 
 			downloadAndSave(clientSftp, path)
-
 		}
 	}
 	return nil
