@@ -59,62 +59,76 @@ func readCSVLocal() {
 	}
 }
 
-func sftpDownload() {
+func sftpDownload() error {
 
 	host := os.Getenv("HOST")
 	user := os.Getenv("USER")
 	password := os.Getenv("PASSWORD")
 	client, err := connectToHost(user, host, password)
 	if err != nil {
-		panic(err)
+		return fmt.Errorf("Some error occured")
 	}
 
 	// open an SFTP session over an existing ssh connection.
 	clientSftp, err := sftp.NewClient(client)
+	fmt.Printf("%T", clientSftp)
+
 	if err != nil {
 		log.Fatal(err)
+		return fmt.Errorf("Some error occured")
 	}
 	defer client.Close()
+
+	newpath := filepath.Join(".", "tmp")
+	errMkdir := os.MkdirAll(newpath, os.ModePerm)
+	if errMkdir != nil {
+		fmt.Println("err", err)
+	}
 
 	// walk a directory
 	w := clientSftp.Walk("/home/ta/files/")
 	for w.Step() {
+
 		if w.Err() != nil {
 			continue
 		}
 
 		path := w.Path()
 
-		newpath := filepath.Join(".", "tmp")
-		err := os.MkdirAll(newpath, os.ModePerm)
-		if err != nil {
-			fmt.Println("err", err)
-		}
 		isCsv := strings.Contains(path, ".csv")
-		timestamp := strconv.FormatInt(time.Now().UTC().UnixNano(), 10)
-		localPath := "tmp/" + timestamp + ".csv"
+
 		if isCsv {
 
-			srcFile, err := clientSftp.OpenFile(path, (os.O_RDONLY))
-			if err != nil {
-				panic(err)
-			}
-
-			dstFile, err := os.Create(localPath)
-			if err != nil {
-				panic(err)
-			}
-			bytes, err := io.Copy(dstFile, srcFile)
-			if err != nil {
-				panic(err)
-			}
-			log.Printf("%d bytes copied to %v", bytes, localPath)
-			defer dstFile.Close()
-			defer srcFile.Close()
+			downloadAndSave(clientSftp, path)
 
 		}
 	}
+	return nil
 
+}
+
+// In case your function does not return anything, then return errors, dont cause a panic within the function
+
+func downloadAndSave(clientSftp *sftp.Client, path string) error {
+	timestamp := strconv.FormatInt(time.Now().UTC().UnixNano(), 10)
+	localPath := "tmp/" + timestamp + ".csv"
+	srcFile, err := clientSftp.OpenFile(path, (os.O_RDONLY))
+	if err != nil {
+		return fmt.Errorf("Some error occured")
+	}
+
+	dstFile, err := os.Create(localPath)
+	if err != nil {
+		return fmt.Errorf("Some error occured")
+	}
+	bytes, err := io.Copy(dstFile, srcFile)
+	if err != nil {
+		return fmt.Errorf("Some error occured")
+	}
+	log.Printf("%d bytes copied to %v", bytes, localPath)
+	defer dstFile.Close()
+	defer srcFile.Close()
+	return nil
 }
 
 func connectToHost(user, host, pass string) (*ssh.Client, error) {
