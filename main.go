@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/csv"
 	"fmt"
 	"io"
@@ -12,17 +13,18 @@ import (
 	"strings"
 	"time"
 
+	ch "github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/joho/godotenv"
 
 	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
 )
 
-type empData struct {
-	Name string
-	Age  string
-	City string
-}
+// type empData struct {
+// 	Name string
+// 	Age  string
+// 	City string
+// }
 
 func main() {
 	var start = time.Now()
@@ -42,11 +44,109 @@ func main() {
 	fmt.Println("READ CSV Time", time.Since(sftpTime))
 	deleteLocalFiles()
 	fmt.Println("Delete CSV Time", time.Since(readCSVTime))
+
+	connectToClick := time.Now()
+	conn, ctx, err__ := connectToClickhouse()
+
+	if err__ != nil {
+		log.Fatalf("Some error occured. Err: %s", err)
+	}
+	fmt.Println("Connect to Clickhouse Time", time.Since(connectToClick))
+	createTable := time.Now()
+
+	error_ := createClickhouseTable(conn, ctx)
+
+	if error_ != nil {
+
+		fmt.Println("ERROR")
+	}
+	fmt.Println("Create Clickhouse Table", time.Since(createTable))
+
 }
 
 // generateCHCSVs(){
 
 // }
+
+func connectToClickhouse() (ch.Conn, context.Context, error) {
+
+	host := os.Getenv("CH_HOST")
+	user := os.Getenv("CH_USER")
+	password := os.Getenv("CH_PASSWORD")
+
+	conn, err := ch.Open(&ch.Options{
+		Addr: []string{host},
+		Auth: ch.Auth{
+			Database: "default",
+			Username: user,
+			Password: password,
+		},
+		//Debug:           true,
+		DialTimeout:     time.Second,
+		MaxOpenConns:    10,
+		MaxIdleConns:    5,
+		ConnMaxLifetime: time.Hour,
+		Compression: &ch.Compression{
+			Method: ch.CompressionLZ4,
+		},
+		Settings: ch.Settings{
+			"max_execution_time": 60,
+		},
+	})
+	if err != nil {
+		return nil, nil, err
+
+	}
+	ctx := ch.Context(context.Background(), ch.WithSettings(ch.Settings{
+		"max_block_size": 10,
+	}), ch.WithProgress(func(p *ch.Progress) {
+		fmt.Println("progress: ", p)
+	}))
+	if err := conn.Ping(ctx); err != nil {
+		if exception, ok := err.(*ch.Exception); ok {
+			fmt.Printf("Catch exception [%d] %s \n%s\n", exception.Code, exception.Message, exception.StackTrace)
+		}
+		return nil, nil, err
+	}
+
+	return conn, ctx, nil
+
+}
+
+func createClickhouseTable(conn ch.Conn, ctx context.Context) error {
+	err := conn.Exec(ctx, `DROP TABLE IF EXISTS example`)
+	if err != nil {
+		return err
+	}
+	err = conn.Exec(ctx, `
+		CREATE TABLE IF NOT EXISTS example (
+			Col1 UInt8,
+			Col2 String,
+			Col3 DateTime
+		) engine=Memory
+	`)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func insertIntochTable(conn ch.Conn, ctx context.Context) error {
+	batch, err := conn.PrepareBatch(ctx, "INSERT INTO example (Col1, Col2, Col3)")
+	if err != nil {
+		return err
+	}
+	for i := 0; i < 10; i++ {
+		if err := batch.Append(uint8(i), fmt.Sprintf("value_%d", i), time.Now()); err != nil {
+			return err
+		}
+	}
+	if err := batch.Send(); err != nil {
+		return err
+	}
+	return nil
+}
+
 func deleteLocalFiles() {
 	localDirectory := "tmp"
 	files, err := ioutil.ReadDir(localDirectory)
@@ -111,7 +211,6 @@ func sftpDownload() error {
 
 	// open an SFTP session over an existing ssh connection.
 	clientSftp, err := sftp.NewClient(client)
-	fmt.Printf("%T", clientSftp)
 
 	if err != nil {
 		log.Fatal(err)
