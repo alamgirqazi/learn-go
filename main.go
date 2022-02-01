@@ -10,7 +10,6 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -30,31 +29,25 @@ type empData struct {
 }
 
 func main() {
-	var start = time.Now()
-
+	fmt.Println("starting your go program")
 	err := godotenv.Load(".env")
 	if err != nil {
 		log.Fatalf("Some error occured. Err: %s", err)
 	}
 
-	sftpDownload()
 	sftpTime := time.Now()
-	fmt.Println("SFTP Time", time.Since(start))
-
-	connectToClick := time.Now()
-	conn, ctx, err__ := connectToClickhouse()
-
+	sftpDownload()
 	fmt.Println("READ CSV Time", time.Since(sftpTime))
+	conn, ctx, err__ := connectToClickhouse()
+	connectToClick := time.Now()
 	readCSVLocal(conn, ctx)
-	readCSVTime := time.Now()
 	deleteLocalFiles()
-	fmt.Println("Delete CSV Time", time.Since(readCSVTime))
+	fmt.Println("Process Files in GO", time.Since(connectToClick))
 
 	if err__ != nil {
 		log.Fatalf("Some error occured. Err: %s", err)
 	}
-	fmt.Println("Connect to Clickhouse Time", time.Since(connectToClick))
-	createTable := time.Now()
+	// createTable := time.Now()
 
 	// error_ := createClickhouseTable(conn, ctx)
 
@@ -62,13 +55,9 @@ func main() {
 
 	// 	fmt.Println("ERROR")
 	// }
-	fmt.Println("Create Clickhouse Table", time.Since(createTable))
+	// fmt.Println("Create Clickhouse Table", time.Since(createTable))
 
 }
-
-// generateCHCSVs(){
-
-// }
 
 func connectToClickhouse() (ch.Conn, context.Context, error) {
 
@@ -180,7 +169,7 @@ func insertToCH(c1 chan empData, c2 chan bool, wg *sync.WaitGroup, conn ch.Conn,
 		select {
 		case msg1 := <-c1:
 			empArray = append(empArray, msg1)
-			if len(empArray)%100 == 0 {
+			if len(empArray)%100000 == 0 {
 
 				insertIntoCHTable(conn, ctx, empArray)
 				empArray = nil
@@ -208,7 +197,6 @@ func insertToCH(c1 chan empData, c2 chan bool, wg *sync.WaitGroup, conn ch.Conn,
 		}
 	}
 	defer wg.Done()
-	defer fmt.Println("lol")
 
 }
 
@@ -226,7 +214,7 @@ func readCSVLocal(conn ch.Conn, ctx context.Context) {
 	var wginserter sync.WaitGroup
 
 	// var basenameOpts []empData
-	channel := make(chan empData, 10000)
+	channel := make(chan empData, 1000000)
 	channel2 := make(chan bool, 10000)
 
 	numberOfIserters := 5
@@ -253,7 +241,7 @@ func readCSVLocal(conn ch.Conn, ctx context.Context) {
 		channel2 <- true
 	}
 	wginserter.Wait()
-	fmt.Println("after ", runtime.NumGoroutine(), runtime.NumCPU(), runtime.NumCgoCall())
+	// fmt.Println("after ", runtime.NumGoroutine(), runtime.NumCPU(), runtime.NumCgoCall())
 
 }
 
