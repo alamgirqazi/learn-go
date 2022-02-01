@@ -5,12 +5,15 @@ import (
 	"encoding/csv"
 	"fmt"
 	"io"
+	"io/fs"
 	"io/ioutil"
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	ch "github.com/ClickHouse/clickhouse-go/v2"
@@ -20,11 +23,11 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-// type empData struct {
-// 	Name string
-// 	Age  string
-// 	City string
-// }
+type empData struct {
+	Name string
+	Age  string
+	City string
+}
 
 func main() {
 	var start = time.Now()
@@ -38,15 +41,14 @@ func main() {
 	sftpTime := time.Now()
 	fmt.Println("SFTP Time", time.Since(start))
 
-	readCSVLocal()
-	readCSVTime := time.Now()
-
-	fmt.Println("READ CSV Time", time.Since(sftpTime))
-	deleteLocalFiles()
-	fmt.Println("Delete CSV Time", time.Since(readCSVTime))
-
 	connectToClick := time.Now()
 	conn, ctx, err__ := connectToClickhouse()
+
+	fmt.Println("READ CSV Time", time.Since(sftpTime))
+	readCSVLocal(conn, ctx)
+	readCSVTime := time.Now()
+	deleteLocalFiles()
+	fmt.Println("Delete CSV Time", time.Since(readCSVTime))
 
 	if err__ != nil {
 		log.Fatalf("Some error occured. Err: %s", err)
@@ -54,12 +56,12 @@ func main() {
 	fmt.Println("Connect to Clickhouse Time", time.Since(connectToClick))
 	createTable := time.Now()
 
-	error_ := createClickhouseTable(conn, ctx)
+	// error_ := createClickhouseTable(conn, ctx)
 
-	if error_ != nil {
+	// if error_ != nil {
 
-		fmt.Println("ERROR")
-	}
+	// 	fmt.Println("ERROR")
+	// }
 	fmt.Println("Create Clickhouse Table", time.Since(createTable))
 
 }
@@ -114,15 +116,15 @@ func connectToClickhouse() (ch.Conn, context.Context, error) {
 }
 
 func createClickhouseTable(conn ch.Conn, ctx context.Context) error {
-	err := conn.Exec(ctx, `DROP TABLE IF EXISTS example`)
-	if err != nil {
-		return err
-	}
-	err = conn.Exec(ctx, `
-		CREATE TABLE IF NOT EXISTS example (
-			Col1 UInt8,
-			Col2 String,
-			Col3 DateTime
+	// err := conn.Exec(ctx, `DROP TABLE IF EXISTS example`)
+	// if err != nil {
+	// 	return err
+	// }
+	err := conn.Exec(ctx, `
+		CREATE TABLE IF NOT EXISTS example2 (
+			Name String,
+			Age String,
+			City String
 		) engine=Memory
 	`)
 	if err != nil {
@@ -131,13 +133,19 @@ func createClickhouseTable(conn ch.Conn, ctx context.Context) error {
 	return nil
 }
 
-func insertIntochTable(conn ch.Conn, ctx context.Context) error {
-	batch, err := conn.PrepareBatch(ctx, "INSERT INTO example (Col1, Col2, Col3)")
+func insertIntoCHTable(conn ch.Conn, ctx context.Context, empArray []empData) error {
+	fmt.Println("inserting into CH ")
+	batch, err := conn.PrepareBatch(ctx, "INSERT INTO example2 (Name, Age, City)")
 	if err != nil {
 		return err
 	}
-	for i := 0; i < 10; i++ {
-		if err := batch.Append(uint8(i), fmt.Sprintf("value_%d", i), time.Now()); err != nil {
+	for i := 0; i < len(empArray); i++ {
+
+		name := empArray[i].Name
+		age := empArray[i].Age
+		city := empArray[i].City
+		if err := batch.Append(name, age, city); err != nil {
+			// if err := batch.Append(uint8(i), fmt.Sprintf("value_%d", i), time.Now()); err != nil {
 			return err
 		}
 	}
@@ -162,7 +170,44 @@ func deleteLocalFiles() {
 	}
 }
 
-func readCSVLocal() {
+func insertToCH(c1 chan empData, c2 chan bool, wg *sync.WaitGroup, conn ch.Conn, ctx context.Context) {
+	// est blish ch connection
+	// forever loop
+	var empArray []empData = nil
+	// datastructure
+	vr := true
+	for vr {
+		select {
+		case msg1 := <-c1:
+			empArray = append(empArray, msg1)
+			if len(empArray)%5 == 0 {
+
+				insertIntoCHTable(conn, ctx, empArray)
+				empArray = nil
+			}
+			//appemd to data struct
+			// if sizze == 100000
+			// insert block
+			// zero out datastructure
+		case <-c2:
+			// no more file readers
+			// empty the channel c1
+			// insert and kill
+			fmt.Println("Received kill")
+			if len(empArray) > 0 {
+				insertIntoCHTable(conn, ctx, empArray)
+
+				empArray = nil
+			}
+			vr = false
+		}
+	}
+	defer wg.Done()
+	defer fmt.Println("lol")
+
+}
+
+func readCSVLocal(conn ch.Conn, ctx context.Context) {
 	fmt.Println("reading CSV File from local")
 	localDirectory := "tmp"
 	files, err := ioutil.ReadDir(localDirectory)
@@ -172,32 +217,70 @@ func readCSVLocal() {
 		log.Fatal(err)
 	}
 
-	for _, f := range files {
-		name := localDirectory + "/" + f.Name()
-		csvFile, err := os.Open(name)
-		if err != nil {
-			fmt.Println(err)
-			fmt.Println("cannot open the file ")
-		}
+	var wgreader sync.WaitGroup
+	var wginserter sync.WaitGroup
 
-		csvLines, err := csv.NewReader(csvFile).ReadAll()
-		if err != nil {
-			fmt.Println(err)
-		}
-		for _, line := range csvLines {
-			fmt.Println("CSV ", line)
-			// emp := empData{
-			// 	Name: line[0],
-			// 	Age:  line[1],
-			// 	City: line[2],
-			// }
-			// fmt.Println(emp.Name + " " + emp.Age + " " + emp.City)
-		}
-		defer csvFile.Close()
+	// var basenameOpts []empData
+	channel := make(chan empData, 10000)
+	channel2 := make(chan bool, 10000)
 
+	numberOfIserters := 5
+
+	wginserter.Add(numberOfIserters)
+	for i := 0; i < numberOfIserters; i++ {
+		go insertToCH(channel, channel2, &wginserter, conn, ctx)
 	}
 
+	for _, f := range files {
+		fmt.Println("file s")
+		wgreader.Add(1)
+		// fmt.Println(runtime.NumGoroutine())
+		go reader(f, localDirectory, channel, channel2, &wgreader)
+
+	}
+	wgreader.Wait()
+	fmt.Println("No more readers")
+	// for i := 0; i < numberOfIserters; i++ {
+	// 	channel2 <- true
+	// }
+	wginserter.Wait()
+	fmt.Println("after ", runtime.NumGoroutine(), runtime.NumCPU(), runtime.NumCgoCall())
+
 }
+
+func reader(f fs.FileInfo, localDirectory string, c1 chan empData, c2 chan bool, wg *sync.WaitGroup) {
+
+	// channel := make(chan []byte, 10000)
+	name := localDirectory + "/" + f.Name()
+	csvFile, err := os.Open(name)
+	if err != nil {
+		fmt.Println(err)
+		fmt.Println("cannot open the file ")
+	}
+
+	csvLines, err := csv.NewReader(csvFile).ReadAll()
+	if err != nil {
+		fmt.Println(err)
+	}
+
+	for _, line := range csvLines {
+		// fmt.Println("CSV ", line)
+		emp := empData{
+			Name: line[0],
+			Age:  line[1],
+			City: line[2],
+		}
+
+		c1 <- emp
+
+	}
+	fmt.Println("File completed")
+
+	wg.Done()
+	defer csvFile.Close()
+}
+
+// download files from SFTP Server
 
 func sftpDownload() error {
 
@@ -245,8 +328,7 @@ func sftpDownload() error {
 
 }
 
-// In case your function does not return anything, then return errors, dont cause a panic within the function
-
+// download files and store to local
 func downloadAndSave(clientSftp *sftp.Client, path string) error {
 	timestamp := strconv.FormatInt(time.Now().UTC().UnixNano(), 10)
 	localPath := "tmp/" + timestamp + ".csv"
@@ -269,6 +351,7 @@ func downloadAndSave(clientSftp *sftp.Client, path string) error {
 	return nil
 }
 
+// connection to SSH
 func connectToHost(user, host, pass string) (*ssh.Client, error) {
 
 	sshConfig := &ssh.ClientConfig{
