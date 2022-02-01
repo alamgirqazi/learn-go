@@ -134,7 +134,7 @@ func createClickhouseTable(conn ch.Conn, ctx context.Context) error {
 }
 
 func insertIntoCHTable(conn ch.Conn, ctx context.Context, empArray []empData) error {
-	fmt.Println("inserting into CH ")
+	// fmt.Println("inserting into CH ")
 	batch, err := conn.PrepareBatch(ctx, "INSERT INTO example2 (Name, Age, City)")
 	if err != nil {
 		return err
@@ -180,11 +180,15 @@ func insertToCH(c1 chan empData, c2 chan bool, wg *sync.WaitGroup, conn ch.Conn,
 		select {
 		case msg1 := <-c1:
 			empArray = append(empArray, msg1)
-			if len(empArray)%5 == 0 {
+			if len(empArray)%100 == 0 {
 
 				insertIntoCHTable(conn, ctx, empArray)
 				empArray = nil
 			}
+			// if len(empArray)%5 != 0 {
+			// 	fmt.Println("ELSE")
+			// }
+
 			//appemd to data struct
 			// if sizze == 100000
 			// insert block
@@ -193,12 +197,13 @@ func insertToCH(c1 chan empData, c2 chan bool, wg *sync.WaitGroup, conn ch.Conn,
 			// no more file readers
 			// empty the channel c1
 			// insert and kill
-			fmt.Println("Received kill")
 			if len(empArray) > 0 {
+				fmt.Println("Received kill")
 				insertIntoCHTable(conn, ctx, empArray)
 
 				empArray = nil
 			}
+
 			vr = false
 		}
 	}
@@ -232,7 +237,7 @@ func readCSVLocal(conn ch.Conn, ctx context.Context) {
 	}
 
 	for _, f := range files {
-		fmt.Println("file s")
+		// fmt.Println("file s")
 		wgreader.Add(1)
 		// fmt.Println(runtime.NumGoroutine())
 		go reader(f, localDirectory, channel, channel2, &wgreader)
@@ -240,9 +245,13 @@ func readCSVLocal(conn ch.Conn, ctx context.Context) {
 	}
 	wgreader.Wait()
 	fmt.Println("No more readers")
-	// for i := 0; i < numberOfIserters; i++ {
-	// 	channel2 <- true
-	// }
+	for len(channel) != 0 {
+		// wait 1 sec in go
+	}
+	for i := 0; i < numberOfIserters; i++ {
+
+		channel2 <- true
+	}
 	wginserter.Wait()
 	fmt.Println("after ", runtime.NumGoroutine(), runtime.NumCPU(), runtime.NumCgoCall())
 
@@ -274,7 +283,7 @@ func reader(f fs.FileInfo, localDirectory string, c1 chan empData, c2 chan bool,
 		c1 <- emp
 
 	}
-	fmt.Println("File completed")
+	fmt.Println("File Read completely and sent to channel")
 
 	wg.Done()
 	defer csvFile.Close()
